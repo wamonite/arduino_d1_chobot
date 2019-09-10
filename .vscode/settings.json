@@ -1,0 +1,6 @@
+{
+    "terminal.integrated.env.osx": {
+        "PATH": "/Users/warren/.platformio/penv/bin:/Users/warren/.platformio/penv:/Users/warren/.pyenv/shims:/usr/local/bin:/usr/local/sbin:/Users/warren/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/MacGPG2/bin:/opt/X11/bin",
+        "PLATFORMIO_CALLER": "vscode"
+    }
+}
