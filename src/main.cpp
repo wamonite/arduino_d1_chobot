@@ -56,7 +56,7 @@ bool ldr_on[2];
 
 // TODO comment
 #define SERIAL_PRINT 1
-#define LOOP_DELAY 100
+#define LDR_DELAY 100
 
 // message structures
 
@@ -93,7 +93,14 @@ bool update_service_status()
 
         if (ldr_on[idx] != ldr_state)
         {
-            updated = true;
+            // TODO better debounce
+            delay(LDR_DELAY);
+            ldr_state = bool(digitalRead(ldr_pin_lookup[idx]));
+
+            if (ldr_on[idx] != ldr_state)
+            {
+                updated = true;
+            }
         }
 
 #if SERIAL_PRINT
@@ -114,6 +121,7 @@ bool update_service_status()
 
 void press_button(service_enum service)
 {
+    // TODO make this asynchronous, so we can handle concurrent requests
     int16_t servo_pos = (service == PRESS_INVERT ? PRESS_START_I : PRESS_START_N);
     int16_t servo_max = (service == PRESS_INVERT ? PRESS_START_I - PRESS_SWEEP : PRESS_START_N + PRESS_SWEEP);
     int16_t servo_step = (service == PRESS_INVERT ? -PRESS_STEP : PRESS_STEP);
@@ -269,7 +277,4 @@ void loop() {
         press_button(S_CH);
         servo_press[S_CH] = false;
     }
-
-    // TODO should debounce LDR inputs and remove this
-    delay(LOOP_DELAY);
 }
