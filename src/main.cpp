@@ -15,6 +15,10 @@
 #define MDNS_NAME "chobot"
 #endif
 
+// debug output
+
+//#define SERIAL_PRINT 1
+
 // wifi
 
 const char *ssid = STASSID;
@@ -51,12 +55,11 @@ bool servo_press[2] = {false, false};
 // ldrs
 
 bool ldr_on[2];
+bool ldr_last_state[2];
+unsigned long ldr_last_time[2];
+const unsigned long ldr_debounce = 100;
 
 // main loop
-
-// TODO comment
-#define SERIAL_PRINT 1
-#define LDR_DELAY 100
 
 // message structures
 
@@ -91,29 +94,29 @@ bool update_service_status()
     {
         bool ldr_state = bool(digitalRead(ldr_pin_lookup[idx]));
 
-        if (ldr_on[idx] != ldr_state)
+        if (ldr_last_state[idx] != ldr_state)
         {
-            // TODO better debounce
-            delay(LDR_DELAY);
-            ldr_state = bool(digitalRead(ldr_pin_lookup[idx]));
+            ldr_last_state[idx] = ldr_state;
+            ldr_last_time[idx] = millis();
+        }
 
-            if (ldr_on[idx] != ldr_state)
-            {
-                updated = true;
-            }
+        if (ldr_last_time[idx] != 0 && (millis() - ldr_last_time[idx]) > ldr_debounce)
+        {
+            ldr_on[idx] = ldr_last_state[idx];
+            set_led((service_enum)idx, ldr_last_state[idx]);
+            updated = true;
+            ldr_last_time[idx] = 0;
         }
 
 #if SERIAL_PRINT
-        if (ldr_on[idx] != ldr_state)
+        if (updated)
         {
             Serial.print("service[");
             Serial.print(idx);
             Serial.print("]: ");
-            Serial.println(ldr_state ? "on" : "off");
+            Serial.println(ldr_on[idx] ? "on" : "off");
         }
 #endif
-        ldr_on[idx] = ldr_state;
-        set_led((service_enum)idx, ldr_state);
     }
 
     return updated;
@@ -221,6 +224,8 @@ void setup() {
     // ldrs
     pinMode(ldr_pin_lookup[S_HW], INPUT);
     pinMode(ldr_pin_lookup[S_CH], INPUT);
+    ldr_last_time[0] = 0;
+    ldr_last_time[1] = 0;
 
     // servos
     servo_lookup[0].attach(servo_pin_lookup[S_HW], SERVO_MIN, SERVO_MAX);
