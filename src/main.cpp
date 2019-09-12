@@ -241,29 +241,39 @@ void setup() {
     // wifi
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
+#if SERIAL_PRINT
     Serial.println("");
+#endif
 
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
+#if SERIAL_PRINT
         Serial.print(".");
+#endif
     }
 
+#if SERIAL_PRINT
     Serial.println("");
     Serial.print("Connected to ");
     Serial.println(ssid);
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
+#endif
 
     if (MDNS.begin(mdns_name)) {
+#if SERIAL_PRINT
         Serial.print("MDNS responder started: ");
         Serial.print(mdns_name);
         Serial.println("");
+#endif
     }
 
     server.on("/", handleRoot);
     server.onNotFound(handleNotFound);
     server.begin();
+#if SERIAL_PRINT
     Serial.println("HTTP server started");
+#endif
 }
 
 void loop() {
