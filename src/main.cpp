@@ -19,6 +19,14 @@
 
 //#define SERIAL_PRINT 1
 
+#define STRING_MAX 500
+
+enum service_enum
+{
+    S_HW = 0,
+    S_CH
+};
+
 // wifi
 
 const char *ssid = STASSID;
@@ -58,12 +66,6 @@ unsigned long servo_last_time = 0; // last time the servo loop ran
 // main loop
 
 // message structures
-
-enum service_enum
-{
-    S_HW = 0,
-    S_CH
-};
 
 // functions
 
@@ -162,16 +164,33 @@ void update_servos(const unsigned long time_now)
     }
 }
 
-void handleRoot() {
-    char temp[400];
+void send_bad_request(const char* message)
+{
+    char temp[STRING_MAX];
+    snprintf(
+        temp,
+        STRING_MAX,
+        "\
+Bad Request\n\n\
+Reason: %s\n\
+",
+        message
+    );
+
+    server.send(400, "text/plain", temp);
+}
+
+void handle_root() {
+    char message[STRING_MAX];
     int sec = millis() / 1000;
     int min = sec / 60;
     int hr = min / 60;
 
     snprintf(
-        temp,
-        400,
-        "<html>\
+        message,
+        STRING_MAX,
+        "\
+<html>\
     <head>\
         <meta http-equiv='refresh' content='5'/>\
         <title>%s</title>\
@@ -183,28 +202,51 @@ void handleRoot() {
         <h1>%s</h1>\
         <p>Uptime: %02d:%02d:%02d</p>\
     </body>\
-</html>",
+</html>\
+",
         mdns_name,
         mdns_name,
         hr,
         min % 60,
         sec % 60
     );
-    server.send(200, "text/html", temp);
+
+    server.send(200, "text/html", message);
 }
 
-void handleNotFound() {
-    char temp[400];
+void handle_not_found() {
+    char message[STRING_MAX];
     snprintf(
-        temp,
-        400,
-        "File Not Found\n\n\
-URI: %s\n\
+        message,
+        STRING_MAX,
+        "\
+File Not Found\n\n\
+URI: %s\n\n\
+Args:\n\
 ",
         const_cast<char*>(server.uri().c_str())
     );
 
-    server.send(404, "text/plain", temp);
+    for (uint8_t i = 0; i < server.args(); i++)
+    {
+        char temp[STRING_MAX];
+        snprintf(
+            temp,
+            STRING_MAX,
+            "  %s = '%s'\n",
+            const_cast<char*>(server.argName(i).c_str()),
+            const_cast<char*>(server.arg(i).c_str())
+        );
+
+        int16_t message_space = STRING_MAX - strlen(message) - 1;
+        strncat(
+            message,
+            temp,
+            message_space
+        );
+    }
+
+   server.send(404, "text/plain", message);
 }
 
 void setup() {
@@ -263,8 +305,8 @@ void setup() {
 #endif
     }
 
-    server.on("/", handleRoot);
-    server.onNotFound(handleNotFound);
+    server.on("/", handle_root);
+    server.onNotFound(handle_not_found);
     server.begin();
 #if SERIAL_PRINT
     Serial.println("HTTP server started");
