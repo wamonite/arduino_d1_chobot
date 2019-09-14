@@ -271,10 +271,24 @@ void handle_post_state()
     int16_t idx = (server.uri() == "/api/state/hw") ? 0 : 1;
 
     if (strcmp(set_value, "on") == 0)
+    {
+#if SERIAL_PRINT
+        Serial.print("service[");
+        Serial.print(idx);
+        Serial.println("]: switch on");
+#endif
         desired_state[idx] = 1;
+    }
     else
         if (strcmp(set_value, "off") == 0)
+        {
+#if SERIAL_PRINT
+            Serial.print("service[");
+            Serial.print(idx);
+            Serial.println("]: switch off");
+#endif
             desired_state[idx] = 0;
+        }
         else
         {
             send_bad_request("Invalid 'set' value");
