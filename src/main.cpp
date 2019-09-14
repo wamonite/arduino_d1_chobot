@@ -1,3 +1,12 @@
+/*
+arduino_d1_chobot
+
+Copyright (c) 2019 Warren Moore
+
+This software may be redistributed under the terms of the MIT License.
+See the file LICENSE for details.
+*/
+
 #include <Arduino.h>
 #include <Servo.h>
 #include <ESP8266WiFi.h>
@@ -62,10 +71,6 @@ const int16_t servo_step = 5; // how much to move the servo position every loop
 const unsigned long servo_delay = 250; // how long to wait between servo loops
 int16_t servo_pos[2]; // current servo position value
 unsigned long servo_last_time = 0; // last time the servo loop ran
-
-// main loop
-
-// message structures
 
 // functions
 
