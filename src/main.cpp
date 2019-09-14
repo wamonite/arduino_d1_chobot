@@ -180,14 +180,15 @@ Reason: %s\n\
     server.send(400, "text/plain", temp);
 }
 
-void handle_root() {
-    char message[STRING_MAX];
+void handle_root()
+{
+    char response[STRING_MAX];
     int sec = millis() / 1000;
     int min = sec / 60;
     int hr = min / 60;
 
     snprintf(
-        message,
+        response,
         STRING_MAX,
         "\
 <html>\
@@ -211,13 +212,92 @@ void handle_root() {
         sec % 60
     );
 
-    server.send(200, "text/html", message);
+    server.send(200, "text/html", response);
 }
 
-void handle_not_found() {
-    char message[STRING_MAX];
+void handle_state()
+{
+    if (server.method() != HTTP_GET)
+    {
+        send_bad_request("GET required");
+        return;
+    }
+
+    const int capacity = JSON_OBJECT_SIZE(4);
+    StaticJsonDocument<capacity> doc;
+    doc["status"] = "ok";
+    doc["error"] = "";
+    doc["hw_on"] = ldr_on[0];
+    doc["ch_on"] = ldr_on[1];
+    char response[STRING_MAX];
+    serializeJson(doc, response);
+
+    server.send(200, "application/json", response);
+}
+
+void handle_post_state()
+{
+    if (server.method() != HTTP_POST)
+    {
+        send_bad_request("POST required");
+        return;
+    }
+
+    if (!server.hasArg("plain"))
+    {
+        send_bad_request("No POST data");
+        return;
+    }
+
+    const int request_capacity = JSON_OBJECT_SIZE(1);
+    StaticJsonDocument<request_capacity> request_doc;
+    DeserializationError err = deserializeJson(request_doc, const_cast<char*>(server.arg("plain").c_str()));
+    if (err != DeserializationError::Ok)
+    {
+#if SERIAL_PRINT
+        Serial.print("JSON error: ");
+        Serial.println(err.c_str());
+#endif
+        send_bad_request("Invalid JSON post data");
+        return;
+    }
+    const char* set_value = request_doc["set"];
+    if (set_value == nullptr)
+    {
+        send_bad_request("No 'set' value");
+        return;
+    }
+
+    int16_t idx = (server.uri() == "/api/state/hw") ? 0 : 1;
+
+    if (strcmp(set_value, "on") == 0)
+        desired_state[idx] = 1;
+    else
+        if (strcmp(set_value, "off") == 0)
+            desired_state[idx] = 0;
+        else
+        {
+            send_bad_request("Invalid 'set' value");
+            return;
+        }
+
+    const int response_capacity = JSON_OBJECT_SIZE(4);
+    StaticJsonDocument<response_capacity> response_doc;
+    response_doc["status"] = "ok";
+    response_doc["error"] = "";
+    response_doc["hw_set_state"] = desired_state[0];
+    response_doc["ch_set_state"] = desired_state[1];
+    char response[STRING_MAX];
+    serializeJson(response_doc, response);
+
+    server.send(200, "application/json", response);
+}
+
+void handle_not_found()
+{
+    char response[STRING_MAX];
     snprintf(
-        message,
+        response,
         STRING_MAX,
         "\
 File Not Found\n\n\
@@ -238,15 +318,15 @@ Args:\n\
             const_cast<char*>(server.arg(i).c_str())
         );
 
-        int16_t message_space = STRING_MAX - strlen(message) - 1;
+        int16_t message_space = STRING_MAX - strlen(response) - 1;
         strncat(
-            message,
+            response,
             temp,
             message_space
         );
     }
 
-   server.send(404, "text/plain", message);
+   server.send(404, "text/plain", response);
 }
 
 void setup() {
@@ -306,15 +386,15 @@ void setup() {
     }
 
     server.on("/", handle_root);
+    server.on("/api/state", handle_state);
+    server.on("/api/state/hw", handle_post_state);
+    server.on("/api/state/ch", handle_post_state);
     server.onNotFound(handle_not_found);
     server.begin();
 #if SERIAL_PRINT
     Serial.println("HTTP server started");
 #endif
 }
-
-unsigned long press_time = 0;
-const unsigned long press_delay = 20000;
 
 void loop() {
     server.handleClient();
