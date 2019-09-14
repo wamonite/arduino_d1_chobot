@@ -29,35 +29,31 @@ ESP8266WebServer server(80);
 
 // leds
 
-const int8_t led_pin_lookup[2] = {D7, D8};
+const int8_t led_pin_lookup[2] = {D7, D8}; // led output pins
 
 // ldrs
 
-const int8_t ldr_pin_lookup[2] = {D2, D1};
+const int8_t ldr_pin_lookup[2] = {D2, D1}; // ldr input pins
+bool ldr_on[2]; // ldr input state
+bool initial_state[2] = {false, false}; // has the ldr input state been set at all
+bool desired_state[2] = {false, false}; // what state the ldr inputs should be in
+bool ldr_last_state[2]; // temprary ldr input state used for debouncing
+unsigned long ldr_last_time[2] = {0, 0}; // last time temporary ldr input state during debounce period
+const unsigned long ldr_debounce = 100; // how long temporary ldr input state needs to remain stable
 
 // servos
 
-#define SERVO_MIN 580
-#define SERVO_MAX 2530
-#define SERVO_DETACH_DELAY 1000
-
-Servo servo_lookup[2];
-const int8_t servo_pin_lookup[2] = {D4, D3};
-bool servo_press[2] = {false, false};
-
-#define PRESS_START_N 0
-#define PRESS_START_I 180
-#define PRESS_STEP 1
-#define PRESS_SWEEP 115
-#define PRESS_INVERT S_HW
-#define PRESS_DELAY 5
-
-// ldrs
-
-bool ldr_on[2];
-bool ldr_last_state[2];
-unsigned long ldr_last_time[2];
-const unsigned long ldr_debounce = 100;
+Servo servo_lookup[2]; // servo controllers
+const int8_t servo_pin_lookup[2] = {D4, D3}; // servo pins
+const int16_t servo_detach_delay = 1000; // time to wait after initial detach
+const int16_t servo_controller_min[2] = {580, 580}; // servo setup param
+const int16_t servo_controller_max[2] = {2350, 2530}; // servo setup param
+const int16_t servo_pos_rest[2] = {180, 0}; // servo value for rest position
+const int16_t servo_pos_press[2] = {180 - 115, 115}; // servo value for button pressing position
+const int16_t servo_step = 5; // how much to move the servo position every loop
+const unsigned long servo_delay = 250; // how long to wait between servo loops
+int16_t servo_pos[2]; // current servo position value
+unsigned long servo_last_time = 0; // last time the servo loop ran
 
 // main loop
 
@@ -87,9 +83,8 @@ void set_angle(service_enum service, int angle)
     servo_lookup[service].write(angle);
 }
 
-bool update_service_status()
+void update_service_status(const unsigned long time_now)
 {
-    bool updated = false;
     for (int8_t idx = 0; idx < 2; idx++)
     {
         bool ldr_state = bool(digitalRead(ldr_pin_lookup[idx]));
@@ -97,75 +92,75 @@ bool update_service_status()
         if (ldr_last_state[idx] != ldr_state)
         {
             ldr_last_state[idx] = ldr_state;
-            ldr_last_time[idx] = millis();
+            ldr_last_time[idx] = time_now;
         }
 
-        if (ldr_last_time[idx] != 0 && (millis() - ldr_last_time[idx]) > ldr_debounce)
+        if (ldr_last_time[idx] != 0 && (time_now - ldr_last_time[idx]) > ldr_debounce)
         {
             ldr_on[idx] = ldr_last_state[idx];
+            if (!initial_state[idx])
+            {
+                desired_state[idx] = ldr_last_state[idx];
+                initial_state[idx] = true;
+            }
             set_led((service_enum)idx, ldr_last_state[idx]);
-            updated = true;
             ldr_last_time[idx] = 0;
-        }
 
 #if SERIAL_PRINT
-        if (updated)
-        {
             Serial.print("service[");
             Serial.print(idx);
             Serial.print("]: ");
             Serial.println(ldr_on[idx] ? "on" : "off");
+#endif
         }
+    }
+}
+
+void update_servos(const unsigned long time_now)
+{
+    if ((time_now - servo_last_time) <= servo_delay)
+        return;
+    servo_last_time = time_now;
+
+    for (int8_t idx = 0; idx < 2; idx++)
+    {
+        if (!initial_state[idx])
+            continue;
+
+        if (servo_pos[idx] == servo_pos_rest[idx] && ldr_on[idx] == desired_state[idx])
+        {
+            if (servo_lookup[idx].attached())
+                servo_lookup[idx].detach();
+
+            continue;
+        }
+
+        if (!servo_lookup[idx].attached())
+            servo_lookup[idx].attach(servo_pin_lookup[idx], servo_controller_min[idx], servo_controller_max[idx]);
+
+        int16_t desired_pos = (ldr_on[idx] == desired_state[idx]) ? servo_pos_rest[idx] : servo_pos_press[idx];
+        if (desired_pos > servo_pos[idx])
+        {
+            servo_pos[idx] += servo_step;
+            if (servo_pos[idx] > desired_pos)
+                servo_pos[idx] = desired_pos;
+        }
+        else
+        {
+            servo_pos[idx] -= servo_step;
+            if (servo_pos[idx] < desired_pos)
+                servo_pos[idx] = desired_pos;
+        }
+
+        set_angle((service_enum)idx, servo_pos[idx]);
+#if SERIAL_PRINT
+        Serial.print("service[");
+        Serial.print(idx);
+        Serial.print("]: pos ");
+        Serial.println(servo_pos[idx]);
 #endif
     }
-
-    return updated;
 }
-
-void press_button(service_enum service)
-{
-    // TODO make this asynchronous, so we can handle concurrent requests
-    int16_t servo_pos = (service == PRESS_INVERT ? PRESS_START_I : PRESS_START_N);
-    int16_t servo_max = (service == PRESS_INVERT ? PRESS_START_I - PRESS_SWEEP : PRESS_START_N + PRESS_SWEEP);
-    int16_t servo_step = (service == PRESS_INVERT ? -PRESS_STEP : PRESS_STEP);
-
-    servo_lookup[0].attach(servo_pin_lookup[S_HW], SERVO_MIN, SERVO_MAX);
-    servo_lookup[1].attach(servo_pin_lookup[S_CH], SERVO_MIN, SERVO_MAX);
-
-    bool service_state = ldr_on[service];
-    while (true)
-    {
-        set_angle(service, servo_pos);
-        servo_pos += servo_step;
-
-        if (servo_step > 0 && servo_pos > servo_max)
-            break;
-        if (servo_step < 0 && servo_pos < servo_max)
-            break;
-
-        update_service_status();
-        if (service_state != ldr_on[service])
-            break;
-
-        delay(PRESS_DELAY);
-    }
-
-    set_angle(service, service == PRESS_INVERT ? PRESS_START_I : PRESS_START_N);
-
-    delay(SERVO_DETACH_DELAY);
-
-    servo_lookup[0].detach();
-    servo_lookup[1].detach();
-}
-
-//                     servo_press[S_HW] = true;
-// #if SERIAL_PRINT
-//                     Serial.println("pressing hot water");
-// #endif
-
-//                     servo_press[S_CH] = true;
-// #if SERIAL_PRINT
-//                     Serial.println("pressing central heating");
 
 void handleRoot() {
     char temp[400];
@@ -224,16 +219,16 @@ void setup() {
     // ldrs
     pinMode(ldr_pin_lookup[S_HW], INPUT);
     pinMode(ldr_pin_lookup[S_CH], INPUT);
-    ldr_last_time[0] = 0;
-    ldr_last_time[1] = 0;
 
     // servos
-    servo_lookup[0].attach(servo_pin_lookup[S_HW], SERVO_MIN, SERVO_MAX);
-    servo_lookup[1].attach(servo_pin_lookup[S_CH], SERVO_MIN, SERVO_MAX);
-    servo_lookup[0].write(PRESS_INVERT == 0 ? PRESS_START_I : PRESS_START_N);
-    servo_lookup[1].write(PRESS_INVERT == 1 ? PRESS_START_I : PRESS_START_N);
+    for (int8_t idx = 0; idx < 2; idx++)
+    {
+        servo_lookup[idx].attach(servo_pin_lookup[idx], servo_controller_min[idx], servo_controller_max[idx]);
+        servo_lookup[idx].write(servo_pos_rest[idx]);
+        servo_pos[idx] = servo_pos_rest[idx];
+    }
 
-    delay(SERVO_DETACH_DELAY);
+    delay(servo_detach_delay);
 
     servo_lookup[0].detach();
     servo_lookup[1].detach();
@@ -276,20 +271,14 @@ void setup() {
 #endif
 }
 
+unsigned long press_time = 0;
+const unsigned long press_delay = 20000;
+
 void loop() {
     server.handleClient();
     MDNS.update();
 
-    update_service_status();
-
-    if (servo_press[S_HW])
-    {
-        press_button(S_HW);
-        servo_press[S_HW] = false;
-    }
-    if (servo_press[S_CH])
-    {
-        press_button(S_CH);
-        servo_press[S_CH] = false;
-    }
+    const unsigned long time_now = millis();
+    update_service_status(time_now);
+    update_servos(time_now);
 }
