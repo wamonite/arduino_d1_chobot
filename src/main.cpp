@@ -68,7 +68,7 @@ const int16_t servo_controller_max[2] = {2350, 2530}; // servo setup param
 const int16_t servo_pos_rest[2] = {180, 0}; // servo value for rest position
 const int16_t servo_pos_press[2] = {180 - 115, 115}; // servo value for button pressing position
 const int16_t servo_step = 5; // how much to move the servo position every loop
-const unsigned long servo_delay = 250; // how long to wait between servo loops
+const unsigned long servo_delay = 50; // how long to wait between servo loops
 int16_t servo_pos[2]; // current servo position value
 unsigned long servo_last_time = 0; // last time the servo loop ran
 
@@ -137,13 +137,27 @@ void update_servos(const unsigned long time_now)
         if (servo_pos[idx] == servo_pos_rest[idx] && ldr_on[idx] == desired_state[idx])
         {
             if (servo_lookup[idx].attached())
+            {
                 servo_lookup[idx].detach();
+#if SERIAL_PRINT
+                Serial.print("service[");
+                Serial.print(idx);
+                Serial.println("]: detach");
+#endif
+            }
 
             continue;
         }
 
         if (!servo_lookup[idx].attached())
+        {
             servo_lookup[idx].attach(servo_pin_lookup[idx], servo_controller_min[idx], servo_controller_max[idx]);
+#if SERIAL_PRINT
+            Serial.print("service[");
+            Serial.print(idx);
+            Serial.println("]: attach");
+#endif
+        }
 
         int16_t desired_pos = (ldr_on[idx] == desired_state[idx]) ? servo_pos_rest[idx] : servo_pos_press[idx];
         if (desired_pos > servo_pos[idx])
