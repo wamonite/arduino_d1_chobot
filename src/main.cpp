@@ -28,7 +28,7 @@ See the file LICENSE for details.
 
 //#define SERIAL_PRINT 1
 
-#define STRING_MAX 500
+#define STRING_MAX 1000
 
 enum service_enum
 {
@@ -210,25 +210,33 @@ void handle_root()
         response,
         STRING_MAX,
         "\
-<html>\
-    <head>\
-        <meta http-equiv='refresh' content='5'/>\
-        <title>%s</title>\
-        <style>\
-            body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\
-        </style>\
-    </head>\
-    <body>\
-        <h1>%s</h1>\
-        <p>Uptime: %02d:%02d:%02d</p>\
-    </body>\
+<!DOCTYPE html>\
+<html lang=\"en\">\
+  <head>\
+    <meta charset=\"utf-8\">\
+    <title>%s</title>\
+    <link rel=\"stylesheet\" type=\"text/css\" href=\"https://fonts.googleapis.com/css?family=Chelsea+Market\">\
+    <style>\
+        body {background-color: #909090; color: #ffffff;}\
+        h1 {text-align: center; font-family: 'Chelsea Market', serif; font-size: 40pt; padding-top: 100px;}\
+        p {text-align: center; font-family: 'Chelsea Market', serif; font-size: 16pt; padding-top: 5px;}\
+    </style>\
+  </head>\
+  <body>\
+    <h1>%s</h1>\
+    <p>Uptime: %02d:%02d:%02d</p>\
+    <p>Hot water: %s</p>\
+    <p>Central heating: %s</p>\
+  </body>\
 </html>\
 ",
         mdns_name,
         mdns_name,
         hr,
         min % 60,
-        sec % 60
+        sec % 60,
+        ldr_on[0] ? "on" : "off",
+        ldr_on[1] ? "on" : "off"
     );
 
     server.send(200, "text/html", response);
