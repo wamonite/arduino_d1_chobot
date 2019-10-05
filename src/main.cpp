@@ -57,7 +57,7 @@ enum service_enum
 
 const char *ssid = STASSID;
 const char *password = STAPSK;
-const int16_t wifi_connect_delay = 500;
+const int16_t wifi_connect_delay = 500; // delay between checking wifi is connected
 const char *mdns_name = MDNS_NAME;
 
 WiFiClient wifi_client;
@@ -70,8 +70,8 @@ const char *mqtt_host = MQTT_HOST;
 const int16_t mqtt_port = MQTT_PORT;
 const char *mqtt_username = MQTT_USERNAME;
 const char *mqtt_password = MQTT_PASSWORD;
-const unsigned long mqtt_reconnect_delay = 5000;
-unsigned long mqtt_reconnect_time = 0;
+const unsigned long mqtt_reconnect_delay = 5000; // delay between trying to reconnect
+unsigned long mqtt_reconnect_time = 0; // how long have we been waiting to reconnect
 const char *mqtt_topic_state[2] = {
     MQTT_PREFIX "hot_water",
     MQTT_PREFIX "central_heating"
