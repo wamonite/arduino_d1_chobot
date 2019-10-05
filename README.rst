@@ -1,11 +1,11 @@
 arduino_d1_chobot
 =================
 
-ESP8266 Arduino chobot code
+ESP8266 Arduino chobot (central heating and hot water robot) code
 
 PCB: https://github.com/wamonite/kicad_d1_chobot
 
-ArduinoJSON seems quite slow, and was annoying to implement the API in C. Should have used MicroPython, but original control code was for an Arduino Pro Mini.
+Initially controlled by a web API and ArduinoJSON, but now understand how awesome MQTT is. Much easier to intergrate with Home Assistant too.
 
 License
 -------
