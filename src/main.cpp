@@ -305,6 +305,7 @@ void handle_root()
 <!DOCTYPE html>\
 <html lang=\"en\">\
   <head>\
+    <meta http-equiv='refresh' content='5'/>\
     <meta charset=\"utf-8\">\
     <title>%s</title>\
     <link rel=\"stylesheet\" type=\"text/css\" href=\"https://fonts.googleapis.com/css?family=Chelsea+Market\">\
