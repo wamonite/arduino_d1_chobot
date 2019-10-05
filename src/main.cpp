@@ -176,6 +176,8 @@ void update_mqtt_connection(const unsigned long time_now)
 
     if (mqtt_client.connected())
     {
+        mqtt_client.loop();
+
         if (reconnected || (time_now - mqtt_last_time > mqtt_delay))
         {
             mqtt_last_time = time_now;
