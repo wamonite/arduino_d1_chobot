@@ -157,11 +157,16 @@ void update_mqtt_connection(const unsigned long time_now)
             Serial.print("Attempting MQTT connection... ");
 #endif
             reconnected = mqtt_client.connect(mqtt_username, mqtt_username, mqtt_password);
-#if SERIAL_PRINT
             if (reconnected)
             {
+                mqtt_client.subscribe(mqtt_channel_set[0]);
+                mqtt_client.subscribe(mqtt_channel_set[1]);
+
+#if SERIAL_PRINT
                 Serial.println("connected");
+#endif
             }
+#if SERIAL_PRINT
             else
             {
                 Serial.print("failed, rc=");
@@ -194,7 +199,7 @@ void update_service_status(const unsigned long time_now)
     {
         bool ldr_state = bool(digitalRead(ldr_pin_lookup[idx]));
 
-        if (ldr_last_state[idx] != ldr_state)
+        if ((ldr_last_state[idx] != ldr_state) || (!initial_state[idx] && ldr_last_time[idx] == 0))
         {
             ldr_last_state[idx] = ldr_state;
             ldr_last_time[idx] = time_now;
@@ -209,6 +214,7 @@ void update_service_status(const unsigned long time_now)
                 initial_state[idx] = true;
             }
             set_led((service_enum)idx, ldr_last_state[idx]);
+            send_state_to_mqtt((service_enum)idx, ldr_last_state[idx]);
             ldr_last_time[idx] = 0;
 
 #if SERIAL_PRINT
@@ -360,6 +366,62 @@ Args:\n\
    web_server.send(404, "text/plain", response);
 }
 
+void handle_mqtt(char* topic, byte* payload, unsigned int length)
+{
+#if SERIAL_PRINT
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    Serial.print(length);
+    Serial.print(" '");
+    for (int i = 0; i < length; i++) {
+        Serial.print((char)payload[i]);
+    }
+    Serial.println("'");
+#endif
+
+    int16_t service = -1;
+    for (int8_t idx = 0; idx < 2; idx++)
+    {
+        if (strcmp(mqtt_channel_set[idx], topic) == 0)
+            service = idx;
+    }
+    if (service >= 0)
+    {
+        if (length == 2 && strncmp("ON", (char*)payload, 2) == 0)
+        {
+#if SERIAL_PRINT
+            Serial.print("Service[");
+            Serial.print(service);
+            Serial.println("] ON");
+#endif
+
+            desired_state[service] = true;
+        }
+        else
+        {
+            if (length == 3 && strncmp("OFF", (char*)payload, 3) == 0)
+            {
+#if SERIAL_PRINT
+                Serial.print("Service[");
+                Serial.print(service);
+                Serial.println("] OFF");
+#endif
+
+                desired_state[service] = false;
+            }
+#if SERIAL_PRINT
+            else
+            {
+                Serial.print("Service[");
+                Serial.print(service);
+                Serial.println("] ?");
+            }
+#endif
+        }
+    }
+}
+
 void setup() {
 #if SERIAL_PRINT
     Serial.begin(115200);
@@ -424,6 +486,7 @@ void setup() {
 #endif
 
     mqtt_client.setServer(mqtt_host, mqtt_port);
+    mqtt_client.setCallback(handle_mqtt);
 }
 
 void loop() {
