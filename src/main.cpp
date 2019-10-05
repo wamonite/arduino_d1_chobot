@@ -455,13 +455,20 @@ void setup() {
     Serial.println(ssid);
 #endif
 
+    bool connect_on = 0;
     while (WiFi.status() != WL_CONNECTED)
     {
+        set_led((service_enum)connect_on, true);
+        set_led((service_enum)(connect_on ? 0 : 1), false);
+        connect_on = connect_on ? 0 : 1;
+
         delay(wifi_connect_delay);
 #if SERIAL_PRINT
         Serial.print(".");
 #endif
     }
+    set_led(S_HW, false);
+    set_led(S_CH, false);
 
 #if SERIAL_PRINT
     Serial.println();
