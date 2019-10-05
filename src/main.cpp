@@ -14,6 +14,7 @@ See the file LICENSE for details.
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ArduinoJson.h>
+#include <PubSubClient.h>
 
 #ifndef STASSID
 #define STASSID "my-ssid"
@@ -22,6 +23,22 @@ See the file LICENSE for details.
 
 #ifndef MDNS_NAME
 #define MDNS_NAME "chobot"
+#endif
+
+#ifndef MQTT_HOST
+#define MQTT_HOST "localhost"
+#endif
+#ifndef MQTT_PORT
+#define MQTT_PORT 1883
+#endif
+
+#ifndef MQTT_USERNAME
+#define MQTT_USERNAME "mqtt-user"
+#define MQTT_PASSWORD "mqtt-password"
+#endif
+
+#ifndef MQTT_PREFIX
+#define MQTT_PREFIX "sensor/chobot/"
 #endif
 
 // debug output
@@ -42,7 +59,28 @@ const char *ssid = STASSID;
 const char *password = STAPSK;
 const char *mdns_name = MDNS_NAME;
 
-ESP8266WebServer server(80);
+WiFiClient wifi_client;
+PubSubClient mqtt_client(wifi_client);
+ESP8266WebServer web_server(80);
+
+// mqtt
+
+const char *mqtt_host = MQTT_HOST;
+const int16_t mqtt_port = MQTT_PORT;
+const char *mqtt_username = MQTT_USERNAME;
+const char *mqtt_password = MQTT_PASSWORD;
+const unsigned long mqtt_reconnect_delay = 5000;
+unsigned long mqtt_reconnect_time = 0;
+const char *mqtt_channel_state[2] = {
+    MQTT_PREFIX "hot_water",
+    MQTT_PREFIX "central_heating"
+};
+const char *mqtt_channel_set[2] = {
+    MQTT_PREFIX "hot_water/set",
+    MQTT_PREFIX "central_heating/set"
+};
+const unsigned long mqtt_delay = 60000; // how long to wait between mqtt status updates
+unsigned long mqtt_last_time = 0; // last time status posted to mqtt
 
 // leds
 
@@ -88,6 +126,64 @@ void set_angle(service_enum service, int angle)
         angle = 180;
 
     servo_lookup[service].write(angle);
+}
+
+void send_state_to_mqtt(service_enum service, bool on)
+{
+#if SERIAL_PRINT
+    Serial.print("Sending status [");
+    Serial.print(service);
+    Serial.print("] to ");
+    Serial.print(mqtt_channel_state[service]);
+    Serial.print(" ");
+    Serial.println(on ? "ON" : "OFF");
+#endif
+
+    mqtt_client.publish(mqtt_channel_state[service], on ? "ON" : "OFF", true);
+}
+
+void update_mqtt_connection(const unsigned long time_now)
+{
+    bool reconnected = false;
+
+    if (!mqtt_client.connected())
+    {
+        if (mqtt_reconnect_time == 0)
+            mqtt_reconnect_time = time_now;
+
+        if (time_now - mqtt_reconnect_time > mqtt_reconnect_delay)
+        {
+#if SERIAL_PRINT
+            Serial.print("Attempting MQTT connection... ");
+#endif
+            reconnected = mqtt_client.connect(mqtt_username, mqtt_username, mqtt_password);
+#if SERIAL_PRINT
+            if (reconnected)
+            {
+                Serial.println("connected");
+            }
+            else
+            {
+                Serial.print("failed, rc=");
+                Serial.print(mqtt_client.state());
+                Serial.println(" trying again in 5 seconds");
+            }
+#endif
+
+            mqtt_reconnect_time = 0;
+        }
+    }
+
+    if (mqtt_client.connected())
+    {
+        if (reconnected || (time_now - mqtt_last_time > mqtt_delay))
+        {
+            mqtt_last_time = time_now;
+
+            send_state_to_mqtt(S_HW, ldr_on[S_HW]);
+            send_state_to_mqtt(S_CH, ldr_on[S_CH]);
+        }
+    }
 }
 
 void update_service_status(const unsigned long time_now)
@@ -183,22 +279,6 @@ void update_servos(const unsigned long time_now)
     }
 }
 
-void send_bad_request(const char* message)
-{
-    char temp[STRING_MAX];
-    snprintf(
-        temp,
-        STRING_MAX,
-        "\
-Bad Request\n\n\
-Reason: %s\n\
-",
-        message
-    );
-
-    server.send(400, "text/plain", temp);
-}
-
 void handle_root()
 {
     char response[STRING_MAX];
@@ -239,99 +319,7 @@ void handle_root()
         ldr_on[1] ? "on" : "off"
     );
 
-    server.send(200, "text/html", response);
-}
-
-void handle_state()
-{
-    if (server.method() != HTTP_GET)
-    {
-        send_bad_request("GET required");
-        return;
-    }
-
-    const int capacity = JSON_OBJECT_SIZE(4);
-    StaticJsonDocument<capacity> doc;
-    doc["status"] = "ok";
-    doc["error"] = "";
-    doc["hw_on"] = ldr_on[0];
-    doc["ch_on"] = ldr_on[1];
-    char response[STRING_MAX];
-    serializeJson(doc, response);
-
-    server.send(200, "application/json", response);
-}
-
-void handle_post_state()
-{
-    if (server.method() != HTTP_POST)
-    {
-        send_bad_request("POST required");
-        return;
-    }
-
-    if (!server.hasArg("plain"))
-    {
-        send_bad_request("No POST data");
-        return;
-    }
-
-    const int request_capacity = JSON_OBJECT_SIZE(1);
-    StaticJsonDocument<request_capacity> request_doc;
-    DeserializationError err = deserializeJson(request_doc, const_cast<char*>(server.arg("plain").c_str()));
-    if (err != DeserializationError::Ok)
-    {
-#if SERIAL_PRINT
-        Serial.print("JSON error: ");
-        Serial.println(err.c_str());
-#endif
-        send_bad_request("Invalid JSON post data");
-        return;
-    }
-    const char* set_value = request_doc["set"];
-    if (set_value == nullptr)
-    {
-        send_bad_request("No 'set' value");
-        return;
-    }
-
-    int16_t idx = (server.uri() == "/api/state/hw") ? 0 : 1;
-
-    if (strcmp(set_value, "on") == 0)
-    {
-#if SERIAL_PRINT
-        Serial.print("service[");
-        Serial.print(idx);
-        Serial.println("]: switch on");
-#endif
-        desired_state[idx] = 1;
-    }
-    else
-        if (strcmp(set_value, "off") == 0)
-        {
-#if SERIAL_PRINT
-            Serial.print("service[");
-            Serial.print(idx);
-            Serial.println("]: switch off");
-#endif
-            desired_state[idx] = 0;
-        }
-        else
-        {
-            send_bad_request("Invalid 'set' value");
-            return;
-        }
-
-    const int response_capacity = JSON_OBJECT_SIZE(4);
-    StaticJsonDocument<response_capacity> response_doc;
-    response_doc["status"] = "ok";
-    response_doc["error"] = "";
-    response_doc["hw_set_state"] = desired_state[0];
-    response_doc["ch_set_state"] = desired_state[1];
-    char response[STRING_MAX];
-    serializeJson(response_doc, response);
-
-    server.send(200, "application/json", response);
+    web_server.send(200, "text/html", response);
 }
 
 void handle_not_found()
@@ -345,18 +333,18 @@ File Not Found\n\n\
 URI: %s\n\n\
 Args:\n\
 ",
-        const_cast<char*>(server.uri().c_str())
+        const_cast<char*>(web_server.uri().c_str())
     );
 
-    for (uint8_t i = 0; i < server.args(); i++)
+    for (uint8_t i = 0; i < web_server.args(); i++)
     {
         char temp[STRING_MAX];
         snprintf(
             temp,
             STRING_MAX,
             "  %s = '%s'\n",
-            const_cast<char*>(server.argName(i).c_str()),
-            const_cast<char*>(server.arg(i).c_str())
+            const_cast<char*>(web_server.argName(i).c_str()),
+            const_cast<char*>(web_server.arg(i).c_str())
         );
 
         int16_t message_space = STRING_MAX - strlen(response) - 1;
@@ -367,7 +355,7 @@ Args:\n\
         );
     }
 
-   server.send(404, "text/plain", response);
+   web_server.send(404, "text/plain", response);
 }
 
 void setup() {
@@ -426,22 +414,22 @@ void setup() {
 #endif
     }
 
-    server.on("/", handle_root);
-    server.on("/api/state", handle_state);
-    server.on("/api/state/hw", handle_post_state);
-    server.on("/api/state/ch", handle_post_state);
-    server.onNotFound(handle_not_found);
-    server.begin();
+    web_server.on("/", handle_root);
+    web_server.onNotFound(handle_not_found);
+    web_server.begin();
 #if SERIAL_PRINT
     Serial.println("HTTP server started");
 #endif
+
+    mqtt_client.setServer(mqtt_host, mqtt_port);
 }
 
 void loop() {
-    server.handleClient();
+    web_server.handleClient();
     MDNS.update();
 
     const unsigned long time_now = millis();
+    update_mqtt_connection(time_now);
     update_service_status(time_now);
     update_servos(time_now);
 }
