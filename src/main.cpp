@@ -57,6 +57,7 @@ enum service_enum
 
 const char *ssid = STASSID;
 const char *password = STAPSK;
+const int16_t wifi_connect_delay = 500;
 const char *mdns_name = MDNS_NAME;
 
 WiFiClient wifi_client;
@@ -71,11 +72,11 @@ const char *mqtt_username = MQTT_USERNAME;
 const char *mqtt_password = MQTT_PASSWORD;
 const unsigned long mqtt_reconnect_delay = 5000;
 unsigned long mqtt_reconnect_time = 0;
-const char *mqtt_channel_state[2] = {
+const char *mqtt_topic_state[2] = {
     MQTT_PREFIX "hot_water",
     MQTT_PREFIX "central_heating"
 };
-const char *mqtt_channel_set[2] = {
+const char *mqtt_topic_set[2] = {
     MQTT_PREFIX "hot_water/set",
     MQTT_PREFIX "central_heating/set"
 };
@@ -112,6 +113,15 @@ unsigned long servo_last_time = 0; // last time the servo loop ran
 
 // functions
 
+void print_service(service_enum service)
+{
+#if SERIAL_PRINT
+    Serial.print("service[");
+    Serial.print(service == S_HW ? "HW" : (service == S_CH ? "CH": "?"));
+    Serial.print("]: ");
+#endif
+}
+
 void set_led(service_enum service, bool on)
 {
     int pin = led_pin_lookup[service];
@@ -130,16 +140,18 @@ void set_angle(service_enum service, int angle)
 
 void send_state_to_mqtt(service_enum service, bool on)
 {
+    if (!mqtt_client.connected())
+        return;
+
+    const char* msg = on ? "ON" : "OFF";
 #if SERIAL_PRINT
-    Serial.print("Sending status [");
-    Serial.print(service);
-    Serial.print("] to ");
-    Serial.print(mqtt_channel_state[service]);
-    Serial.print(" ");
-    Serial.println(on ? "ON" : "OFF");
+    Serial.print("mqtt: tx topic=");
+    Serial.print(mqtt_topic_state[service]);
+    Serial.print(" payload=");
+    Serial.println(msg);
 #endif
 
-    mqtt_client.publish(mqtt_channel_state[service], on ? "ON" : "OFF", true);
+    mqtt_client.publish(mqtt_topic_state[service], msg, true);
 }
 
 void update_mqtt_connection(const unsigned long time_now)
@@ -154,24 +166,20 @@ void update_mqtt_connection(const unsigned long time_now)
         if (time_now - mqtt_reconnect_time > mqtt_reconnect_delay)
         {
 #if SERIAL_PRINT
-            Serial.print("Attempting MQTT connection... ");
+            Serial.print("mqtt: user=");
+            Serial.println(mqtt_username);
 #endif
             reconnected = mqtt_client.connect(mqtt_username, mqtt_username, mqtt_password);
             if (reconnected)
             {
-                mqtt_client.subscribe(mqtt_channel_set[0]);
-                mqtt_client.subscribe(mqtt_channel_set[1]);
-
-#if SERIAL_PRINT
-                Serial.println("connected");
-#endif
+                mqtt_client.subscribe(mqtt_topic_set[0]);
+                mqtt_client.subscribe(mqtt_topic_set[1]);
             }
 #if SERIAL_PRINT
             else
             {
-                Serial.print("failed, rc=");
-                Serial.print(mqtt_client.state());
-                Serial.println(" trying again in 5 seconds");
+                Serial.print("mqtt: error=");
+                Serial.println(mqtt_client.state());
             }
 #endif
 
@@ -218,10 +226,9 @@ void update_service_status(const unsigned long time_now)
             ldr_last_time[idx] = 0;
 
 #if SERIAL_PRINT
-            Serial.print("service[");
-            Serial.print(idx);
-            Serial.print("]: ");
-            Serial.println(ldr_on[idx] ? "on" : "off");
+            print_service((service_enum)idx);
+            Serial.print("state=");
+            Serial.println(ldr_on[idx] ? "ON" : "OFF");
 #endif
         }
     }
@@ -244,9 +251,8 @@ void update_servos(const unsigned long time_now)
             {
                 servo_lookup[idx].detach();
 #if SERIAL_PRINT
-                Serial.print("service[");
-                Serial.print(idx);
-                Serial.println("]: detach");
+                print_service((service_enum)idx);
+                Serial.println("servo detach");
 #endif
             }
 
@@ -257,9 +263,8 @@ void update_servos(const unsigned long time_now)
         {
             servo_lookup[idx].attach(servo_pin_lookup[idx], servo_controller_min[idx], servo_controller_max[idx]);
 #if SERIAL_PRINT
-            Serial.print("service[");
-            Serial.print(idx);
-            Serial.println("]: attach");
+            print_service((service_enum)idx);
+            Serial.println("servo attach");
 #endif
         }
 
@@ -279,9 +284,8 @@ void update_servos(const unsigned long time_now)
 
         set_angle((service_enum)idx, servo_pos[idx]);
 #if SERIAL_PRINT
-        Serial.print("service[");
-        Serial.print(idx);
-        Serial.print("]: pos ");
+        print_service((service_enum)idx);
+        Serial.print("pos=");
         Serial.println(servo_pos[idx]);
 #endif
     }
@@ -323,8 +327,8 @@ void handle_root()
         hr,
         min % 60,
         sec % 60,
-        ldr_on[0] ? "on" : "off",
-        ldr_on[1] ? "on" : "off"
+        ldr_on[0] ? "ON" : "OFF",
+        ldr_on[1] ? "ON" : "OFF"
     );
 
     web_server.send(200, "text/html", response);
@@ -369,21 +373,18 @@ Args:\n\
 void handle_mqtt(char* topic, byte* payload, unsigned int length)
 {
 #if SERIAL_PRINT
-    Serial.print("Message arrived [");
+    Serial.print("mqtt: rx topic=");
     Serial.print(topic);
-    Serial.print("] ");
-    Serial.print(length);
-    Serial.print(" '");
-    for (int i = 0; i < length; i++) {
+    Serial.print(" payload=");
+    for (unsigned int i = 0; i < length; i++)
         Serial.print((char)payload[i]);
-    }
-    Serial.println("'");
+    Serial.println();
 #endif
 
     int16_t service = -1;
     for (int8_t idx = 0; idx < 2; idx++)
     {
-        if (strcmp(mqtt_channel_set[idx], topic) == 0)
+        if (strcmp(mqtt_topic_set[idx], topic) == 0)
             service = idx;
     }
     if (service >= 0)
@@ -391,9 +392,8 @@ void handle_mqtt(char* topic, byte* payload, unsigned int length)
         if (length == 2 && strncmp("ON", (char*)payload, 2) == 0)
         {
 #if SERIAL_PRINT
-            Serial.print("Service[");
-            Serial.print(service);
-            Serial.println("] ON");
+            print_service((service_enum)service);
+            Serial.println("set=ON");
 #endif
 
             desired_state[service] = true;
@@ -403,9 +403,8 @@ void handle_mqtt(char* topic, byte* payload, unsigned int length)
             if (length == 3 && strncmp("OFF", (char*)payload, 3) == 0)
             {
 #if SERIAL_PRINT
-                Serial.print("Service[");
-                Serial.print(service);
-                Serial.println("] OFF");
+                print_service((service_enum)service);
+                Serial.println("set=OFF");
 #endif
 
                 desired_state[service] = false;
@@ -413,9 +412,8 @@ void handle_mqtt(char* topic, byte* payload, unsigned int length)
 #if SERIAL_PRINT
             else
             {
-                Serial.print("Service[");
-                Serial.print(service);
-                Serial.println("] ?");
+                print_service((service_enum)service);
+                Serial.println("set=?");
             }
 #endif
         }
@@ -452,29 +450,29 @@ void setup() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
 #if SERIAL_PRINT
-    Serial.println("");
+    Serial.println();
+    Serial.print("wifi: ssid=");
+    Serial.println(ssid);
 #endif
 
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(wifi_connect_delay);
 #if SERIAL_PRINT
         Serial.print(".");
 #endif
     }
 
 #if SERIAL_PRINT
-    Serial.println("");
-    Serial.print("Connected to ");
-    Serial.println(ssid);
-    Serial.print("IP address: ");
+    Serial.println();
+    Serial.print("wifi: ip=");
     Serial.println(WiFi.localIP());
 #endif
 
     if (MDNS.begin(mdns_name)) {
 #if SERIAL_PRINT
-        Serial.print("MDNS responder started: ");
-        Serial.print(mdns_name);
-        Serial.println("");
+        Serial.print("mdns: name=");
+        Serial.println(mdns_name);
 #endif
     }
 
@@ -482,11 +480,17 @@ void setup() {
     web_server.onNotFound(handle_not_found);
     web_server.begin();
 #if SERIAL_PRINT
-    Serial.println("HTTP server started");
+    Serial.println("web: started");
 #endif
 
     mqtt_client.setServer(mqtt_host, mqtt_port);
     mqtt_client.setCallback(handle_mqtt);
+#if SERIAL_PRINT
+    Serial.print("mqtt: host=");
+    Serial.print(mqtt_host);
+    Serial.print(" port=");
+    Serial.println(mqtt_port);
+#endif
 }
 
 void loop() {
