@@ -41,11 +41,11 @@ See the file LICENSE for details.
 #define MQTT_PREFIX "sensor/chobot/"
 #endif
 
-// debug output
-
-//#define SERIAL_PRINT 1
-
+// size of string buffers
 #define STRING_MAX 1000
+
+// debug output
+// #define SERIAL_PRINT 1
 
 enum service_enum
 {
@@ -95,13 +95,12 @@ bool initial_state[2] = {false, false}; // has the ldr input state been set at a
 bool desired_state[2] = {false, false}; // what state the ldr inputs should be in
 bool ldr_last_state[2]; // temprary ldr input state used for debouncing
 unsigned long ldr_last_time[2] = {0, 0}; // last time temporary ldr input state during debounce period
-const unsigned long ldr_debounce = 100; // how long temporary ldr input state needs to remain stable
+const unsigned long ldr_debounce = 50; // how long temporary ldr input state needs to remain stable
 
 // servos
 
 Servo servo_lookup[2]; // servo controllers
 const int8_t servo_pin_lookup[2] = {D4, D3}; // servo pins
-const int16_t servo_detach_delay = 1000; // time to wait after initial detach
 const int16_t servo_controller_min[2] = {580, 580}; // servo setup param
 const int16_t servo_controller_max[2] = {2350, 2530}; // servo setup param
 const int16_t servo_pos_rest[2] = {180, 0}; // servo value for rest position
@@ -109,7 +108,9 @@ const int16_t servo_pos_press[2] = {180 - 115, 115}; // servo value for button p
 const int16_t servo_step = 5; // how much to move the servo position every loop
 const unsigned long servo_delay = 50; // how long to wait between servo loops
 int16_t servo_pos[2]; // current servo position value
-unsigned long servo_last_time = 0; // last time the servo loop ran
+unsigned long servo_last_loop = 0; // last time the servo loop ran
+unsigned long servo_last_move = 0; // last time a servo moved
+const int16_t servo_detach_delay = 5000; // detach servos after they haven't moved for this long
 
 // functions
 
@@ -222,8 +223,11 @@ void update_service_status(const unsigned long time_now)
                 initial_state[idx] = true;
             }
             set_led((service_enum)idx, ldr_last_state[idx]);
-            send_state_to_mqtt((service_enum)idx, ldr_last_state[idx]);
             ldr_last_time[idx] = 0;
+
+            // ensure servos and mqtt update next loop
+            servo_last_loop = 0;
+            mqtt_last_time = 0;
 
 #if SERIAL_PRINT
             print_service((service_enum)idx);
@@ -236,16 +240,10 @@ void update_service_status(const unsigned long time_now)
 
 void update_servos(const unsigned long time_now)
 {
-    if ((time_now - servo_last_time) <= servo_delay)
-        return;
-    servo_last_time = time_now;
-
-    for (int8_t idx = 0; idx < 2; idx++)
+    // detach servos if they haven't moved for a while
+    if (time_now - servo_last_move > servo_detach_delay)
     {
-        if (!initial_state[idx])
-            continue;
-
-        if (servo_pos[idx] == servo_pos_rest[idx] && ldr_on[idx] == desired_state[idx])
+        for (int8_t idx = 0; idx < 2; idx++)
         {
             if (servo_lookup[idx].attached())
             {
@@ -255,20 +253,21 @@ void update_servos(const unsigned long time_now)
                 Serial.println("servo detach");
 #endif
             }
+        }
+    }
 
+    if (time_now - servo_last_loop > servo_delay)
+        servo_last_loop = time_now;
+    else
+        return;
+
+    for (int8_t idx = 0; idx < 2; idx++)
+    {
+        if (!initial_state[idx])
             continue;
-        }
 
-        if (!servo_lookup[idx].attached())
-        {
-            servo_lookup[idx].attach(servo_pin_lookup[idx], servo_controller_min[idx], servo_controller_max[idx]);
-#if SERIAL_PRINT
-            print_service((service_enum)idx);
-            Serial.println("servo attach");
-#endif
-        }
-
-        int16_t desired_pos = (ldr_on[idx] == desired_state[idx]) ? servo_pos_rest[idx] : servo_pos_press[idx];
+        const int16_t last_pos = servo_pos[idx];
+        const int16_t desired_pos = (ldr_on[idx] == desired_state[idx]) ? servo_pos_rest[idx] : servo_pos_press[idx];
         if (desired_pos > servo_pos[idx])
         {
             servo_pos[idx] += servo_step;
@@ -282,12 +281,26 @@ void update_servos(const unsigned long time_now)
                 servo_pos[idx] = desired_pos;
         }
 
-        set_angle((service_enum)idx, servo_pos[idx]);
+        if (last_pos != servo_pos[idx])
+        {
+            if (!servo_lookup[idx].attached())
+            {
+                servo_lookup[idx].attach(servo_pin_lookup[idx], servo_controller_min[idx], servo_controller_max[idx]);
 #if SERIAL_PRINT
-        print_service((service_enum)idx);
-        Serial.print("pos=");
-        Serial.println(servo_pos[idx]);
+                print_service((service_enum)idx);
+                Serial.println("servo attach");
 #endif
+            }
+
+            set_angle((service_enum)idx, servo_pos[idx]);
+#if SERIAL_PRINT
+            print_service((service_enum)idx);
+            Serial.print("pos=");
+            Serial.println(servo_pos[idx]);
+#endif
+
+            servo_last_move = time_now;
+        }
     }
 }
 
@@ -425,6 +438,7 @@ void setup() {
 #if SERIAL_PRINT
     Serial.begin(115200);
 #endif
+    unsigned long time_now = millis();
 
     // leds
     pinMode(led_pin_lookup[S_HW], OUTPUT);
@@ -441,11 +455,7 @@ void setup() {
         servo_lookup[idx].write(servo_pos_rest[idx]);
         servo_pos[idx] = servo_pos_rest[idx];
     }
-
-    delay(servo_detach_delay);
-
-    servo_lookup[0].detach();
-    servo_lookup[1].detach();
+    servo_last_move = time_now;
 
     // wifi
     WiFi.mode(WIFI_STA);
